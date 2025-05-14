@@ -1,0 +1,797 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kalkulator Statistik</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.9/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjs@13.1.0/lib/browser/math.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jstat@1.9.6/dist/jstat.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Animasi latar belakang gradien bergerak */
+    body {
+      background: linear-gradient(45deg, #93c5fd, #d8b4fe, #e5e7eb, #60a5fa);
+      background-size: 400% 400%;
+      animation: gradientBackground 15s ease infinite;
+      will-change: background-position;
+    }
+
+    @keyframes gradientBackground {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+  </style>
+  <script>
+    // Konfigurasi Tailwind dengan plugin animate
+    tailwind.config = {
+      theme: {
+        extend: {
+          animation: {
+            fade: 'fadeIn 0.5s ease-in-out',
+            slideLeft: 'slideLeft 0.5s ease-in-out',
+            slideRight: 'slideRight 0.5s ease-in-out',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' },
+            },
+            slideLeft: {
+              '0%': { transform: 'translateX(-20px)', opacity: '0' },
+              '100%': { transform: 'translateX(0)', opacity: '1' },
+            },
+            slideRight: {
+              '0%': { transform: 'translateX(20px)', opacity: '0' },
+              '100%': { transform: 'translateX(0)', opacity: '1' },
+            },
+          },
+        },
+      },
+      plugins: [
+        function ({ addUtilities }) {
+          addUtilities({
+            '.animate-delay-100': { 'animation-delay': '100ms' },
+            '.animate-delay-200': { 'animation-delay': '200ms' },
+            '.animate-delay-300': { 'animation-delay': '300ms' },
+            '.animate-delay-400': { 'animation-delay': '400ms' },
+          });
+        },
+      ],
+    };
+  </script>
+</head>
+<body class="min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Fungsi Statistik
+    const hitungStatistik = (data) => {
+      if (!data || data.length === 0) return null;
+      const angka = data.map(Number).filter(n => !isNaN(n));
+      if (angka.length === 0) return null;
+
+      const mean = math.mean(angka);
+      const median = math.median(angka);
+      const modus = math.mode(angka).length === angka.length ? 'Tidak ada modus' : math.mode(angka).join(', ');
+      const rentang = math.max(angka) - math.min(angka);
+      const varians = math.variance(angka);
+      const stdDev = math.std(angka);
+      const diurutkan = angka.sort((a, b) => a - b);
+      const q1 = math.quantileSeq(diurutkan, 0.25);
+      const q3 = math.quantileSeq(diurutkan, 0.75);
+      const iqr = q3 - q1;
+
+      return { mean, median, modus, rentang, varians, stdDev, q1, q3, iqr, diurutkan, angka };
+    };
+
+    // Fungsi PDF & CDF (Normal Distribution)
+    const hitungPDFdanCDF = (data) => {
+      const angka = data.map(Number).filter(n => !isNaN(n));
+      if (angka.length === 0) return null;
+
+      const mean = math.mean(angka);
+      const stdDev = math.std(angka);
+      const min = Math.min(...angka);
+      const max = Math.max(...angka);
+      const points = Array.from({ length: 100 }, (_, i) => min + (i * (max - min) / 99));
+      const pdf = points.map(x => jStat.normal.pdf(x, mean, stdDev));
+      const cdf = points.map(x => jStat.normal.cdf(x, mean, stdDev));
+
+      return { points, pdf, cdf, mean, stdDev };
+    };
+
+    // Fungsi Confidence Interval
+    const hitungConfidenceInterval = (data, confidenceLevel = 0.95) => {
+      const angka = data.map(Number).filter(n => !isNaN(n));
+      if (angka.length === 0) return null;
+
+      const mean = math.mean(angka);
+      const stdDev = math.std(angka);
+      const n = angka.length;
+      const z = jStat.normal.inv(1 - (1 - confidenceLevel) / 2, 0, 1);
+      const marginError = z * (stdDev / Math.sqrt(n));
+      const ciZ = [mean - marginError, mean + marginError];
+
+      const t = jStat.studentt.inv(1 - (1 - confidenceLevel) / 2, n - 1);
+      const marginErrorT = t * (stdDev / Math.sqrt(n));
+      const ciT = [mean - marginErrorT, mean + marginErrorT];
+
+      return { ciZ, ciT, mean, n, confidenceLevel };
+    };
+
+    // Fungsi Hypothesis Testing
+    const hitungHypothesisTest = (data1, data2 = null, mu0, alpha = 0.05) => {
+      const angka1 = data1.map(Number).filter(n => !isNaN(n));
+      if (angka1.length === 0) return null;
+
+      const mean1 = math.mean(angka1);
+      const stdDev1 = math.std(angka1);
+      const n1 = angka1.length;
+
+      const zStat = (mean1 - mu0) / (stdDev1 / Math.sqrt(n1));
+      const pValueOneSample = 2 * (1 - jStat.normal.cdf(Math.abs(zStat), 0, 1));
+
+      let twoSampleResult = null;
+      if (data2 && data2.length > 0) {
+        const angka2 = data2.map(Number).filter(n => !isNaN(n));
+        if (angka2.length === 0) return null;
+
+        const mean2 = math.mean(angka2);
+        const stdDev2 = math.std(angka2);
+        const n2 = angka2.length;
+
+        const pooledStdDev = Math.sqrt((stdDev1 ** 2 / n1) + (stdDev2 ** 2 / n2));
+        const zStatTwo = (mean1 - mean2) / pooledStdDev;
+        const pValueTwoSample = 2 * (1 - jStat.normal.cdf(Math.abs(zStatTwo), 0, 1));
+
+        twoSampleResult = { zStatTwo, pValueTwoSample, mean2, n2 };
+      }
+
+      return { zStat, pValueOneSample, mean1, n1, alpha, twoSampleResult };
+    };
+
+    // Fungsi Chi-Square Test (Perhitungan Manual)
+    const hitungChiSquare = (contingencyTable) => {
+      if (!contingencyTable || !Array.isArray(contingencyTable) || contingencyTable.length < 2) {
+        return { error: 'Tabel harus memiliki setidaknya 2 baris.' };
+      }
+
+      const rows = contingencyTable.length;
+      const cols = contingencyTable[0].length;
+      if (cols < 2) {
+        return { error: 'Tabel harus memiliki setidaknya 2 kolom.' };
+      }
+
+      // Validasi: Semua baris memiliki jumlah kolom yang sama, hanya angka positif
+      for (let i = 0; i < rows; i++) {
+        if (!Array.isArray(contingencyTable[i]) || contingencyTable[i].length !== cols) {
+          return { error: 'Setiap baris harus memiliki jumlah kolom yang sama.' };
+        }
+        for (let j = 0; j < cols; j++) {
+          const val = contingencyTable[i][j];
+          if (typeof val !== 'number' || isNaN(val) || val < 0) {
+            return { error: 'Semua entri harus angka non-negatif.' };
+          }
+        }
+      }
+
+      // Hitung total baris, kolom, dan keseluruhan
+      const rowTotals = new Array(rows).fill(0);
+      const colTotals = new Array(cols).fill(0);
+      let grandTotal = 0;
+
+      for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+          rowTotals[i] += contingencyTable[i][j];
+          colTotals[j] += contingencyTable[i][j];
+          grandTotal += contingencyTable[i][j];
+        }
+      }
+
+      if (grandTotal === 0) {
+        return { error: 'Tabel tidak boleh kosong.' };
+      }
+
+      // Hitung nilai yang diharapkan (expected) dan statistik Chi-Square
+      let chiSquareStat = 0;
+      for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+          const expected = (rowTotals[i] * colTotals[j]) / grandTotal;
+          if (expected === 0) {
+            return { error: 'Nilai yang diharapkan tidak boleh nol.' };
+          }
+          const observed = contingencyTable[i][j];
+          chiSquareStat += ((observed - expected) ** 2) / expected;
+        }
+      }
+
+      // Hitung derajat kebebasan (df) dan p-value
+      const df = (rows - 1) * (cols - 1);
+      const pValue = 1 - jStat.chisquare.cdf(chiSquareStat, df);
+
+      console.log('Chi-Square Stat:', chiSquareStat, 'P-Value:', pValue, 'DF:', df); // Debugging
+
+      return { chiSquareStat, pValue, df };
+    };
+
+    // Fungsi untuk membuat data grafik
+    const buatDataGrafik = (data, pdfCdfData, regresiData) => {
+      const angka = data.map(Number).filter(n => !isNaN(n));
+      if (angka.length === 0) return null;
+
+      const min = Math.min(...angka);
+      const max = Math.max(...angka);
+      const jumlahBin = 10;
+      const ukuranBin = (max - min) / jumlahBin;
+      const histogram = Array(jumlahBin).fill(0);
+      angka.forEach(n => {
+        const bin = Math.min(Math.floor((n - min) / ukuranBin), jumlahBin - 1);
+        histogram[bin]++;
+      });
+
+      const statistik = hitungStatistik(data);
+      const ringkasanStatistik = [
+        Math.min(...angka),
+        statistik.q1,
+        statistik.median,
+        statistik.q3,
+        Math.max(...angka)
+      ];
+
+      const boxPlotData = {
+        labels: ['Data'],
+        datasets: [{
+          label: 'Box Plot',
+          data: [{
+            min: Math.min(...angka),
+            q1: statistik.q1,
+            median: statistik.median,
+            q3: statistik.q3,
+            max: Math.max(...angka)
+          }],
+          backgroundColor: 'rgba(59, 130, 246, 0.5)'
+        }]
+      };
+
+      const pieData = {
+        labels: Array.from({ length: jumlahBin }, (_, i) =>
+          `${(min + i * ukuranBin).toFixed(2)} - ${(min + (i + 1) * ukuranBin).toFixed(2)}`
+        ),
+        datasets: [{
+          data: histogram,
+          backgroundColor: ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#6b7280', '#14b8a6', '#f97316', '#84cc16']
+        }]
+      };
+
+      let lineData = null;
+      if (pdfCdfData) {
+        lineData = {
+          labels: pdfCdfData.points.map(x => x.toFixed(2)),
+          datasets: [
+            {
+              label: 'PDF',
+              data: pdfCdfData.pdf,
+              borderColor: 'rgba(59, 130, 246, 1)',
+              fill: false
+            },
+            {
+              label: 'CDF',
+              data: pdfCdfData.cdf,
+              borderColor: 'rgba(236, 72, 153, 1)',
+              fill: false
+            }
+          ]
+        };
+      }
+
+      let scatterData = null;
+      if (regresiData) {
+        const regressionLine = regresiData.x.map(x => regresiData.intercept + regresiData.slope * x);
+        scatterData = {
+          labels: regresiData.x,
+          datasets: [
+            {
+              label: 'Data',
+              data: regresiData.x.map((x, i) => ({ x, y: regresiData.y[i] })),
+              backgroundColor: 'rgba(59, 130, 246, 0.5)',
+              type: 'scatter'
+            },
+            {
+              label: 'Garis Regresi',
+              data: regresiData.x.map((x, i) => ({ x, y: regressionLine[i] })),
+              borderColor: 'rgba(236, 72, 153, 1)',
+              fill: false,
+              type: 'line'
+            }
+          ]
+        };
+      }
+
+      return { histogram, ukuranBin, min, ringkasanStatistik, boxPlotData, pieData, lineData, scatterData };
+    };
+
+    // Fungsi Regresi Linier dan Korelasi
+    const hitungRegresiDanKorelasi = (xData, yData) => {
+      const x = xData.map(Number).filter(n => !isNaN(n));
+      const y = yData.map(Number).filter(n => !isNaN(n));
+      if (x.length !== y.length || x.length === 0) return null;
+
+      const n = x.length;
+      const sumX = x.reduce((a, b) => a + b, 0);
+      const sumY = y.reduce((a, b) => a + b, 0);
+      const sumXY = x.reduce((a, b, i) => a + b * y[i], 0);
+      const sumXX = x.reduce((a, b) => a + b * b, 0);
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+      const intercept = (sumY - slope * sumX) / n;
+
+      const meanX = sumX / n;
+      const meanY = sumY / n;
+      const numerator = x.reduce((a, b, i) => a + (b - meanX) * (y[i] - meanY), 0);
+      const denomX = Math.sqrt(x.reduce((a, b) => a + (b - meanX) ** 2, 0));
+      const denomY = Math.sqrt(y.reduce((a, b) => a + (b - meanY) ** 2, 0));
+      const pearsonR = numerator / (denomX * denomY);
+
+      return { slope, intercept, pearsonR, x, y };
+    };
+
+    const Aplikasi = () => {
+      const [tab, setTab] = useState('basic');
+      const [input, setInput] = useState('');
+      const [input2, setInput2] = useState('');
+      const [contingencyTable, setContingencyTable] = useState('');
+      const [mu0, setMu0] = useState('0');
+      const [confidenceLevel, setConfidenceLevel] = useState('0.95');
+      const [alpha, setAlpha] = useState('0.05');
+      const [xData, setXData] = useState('');
+      const [yData, setYData] = useState('');
+      const [statistik, setStatistik] = useState(null);
+      const [pdfCdfData, setPdfCdfData] = useState(null);
+      const [ciData, setCiData] = useState(null);
+      const [hypothesisData, setHypothesisData] = useState(null);
+      const [chiSquareData, setChiSquareData] = useState(null);
+      const [regresiData, setRegresiData] = useState(null);
+      const [dataGrafik, setDataGrafik] = useState(null);
+      const [pesanKesalahan, setPesanKesalahan] = useState('');
+
+      const tanganiHitung = () => {
+        setPesanKesalahan('');
+        const data = input.split(',').map(s => s.trim()).filter(s => s !== '');
+        const data2 = input2.split(',').map(s => s.trim()).filter(s => s !== '');
+        const x = xData.split(',').map(s => s.trim()).filter(s => s !== '');
+        const y = yData.split(',').map(s => s.trim()).filter(s => s !== '');
+
+        if (tab === 'basic' || tab === 'pdfcdf' || tab === 'inferential') {
+          if (data.length === 0) {
+            setPesanKesalahan('Masukkan setidaknya satu angka untuk data utama.');
+            setStatistik(null);
+            setPdfCdfData(null);
+            setCiData(null);
+            setHypothesisData(null);
+            setDataGrafik(null);
+            return;
+          }
+
+          const hasilStatistik = hitungStatistik(data);
+          if (!hasilStatistik) {
+            setPesanKesalahan('Input data utama tidak valid. Pastikan semua entri adalah angka.');
+            return;
+          }
+
+          const hasilPdfCdf = tab === 'pdfcdf' ? hitungPDFdanCDF(data) : null;
+          const hasilCi = tab === 'inferential' ? hitungConfidenceInterval(data, parseFloat(confidenceLevel) || 0.95) : null;
+          const hasilHypothesis = tab === 'inferential' ? hitungHypothesisTest(
+            data,
+            data2.length > 0 ? data2 : null,
+            parseFloat(mu0) || 0,
+            parseFloat(alpha) || 0.05
+          ) : null;
+
+          const hasilGrafik = buatDataGrafik(data, hasilPdfCdf, null);
+          setStatistik(hasilStatistik);
+          setPdfCdfData(hasilPdfCdf);
+          setCiData(hasilCi);
+          setHypothesisData(hasilHypothesis);
+          setDataGrafik(hasilGrafik);
+        } else if (tab === 'chisquare') {
+          if (!contingencyTable.trim()) {
+            setPesanKesalahan('Masukkan tabel kontingensi dalam format JSON.');
+            setChiSquareData(null);
+            return;
+          }
+          try {
+            const table = JSON.parse(contingencyTable);
+            const hasilChiSquare = hitungChiSquare(table);
+            if (hasilChiSquare.error) {
+              setPesanKesalahan(hasilChiSquare.error);
+              setChiSquareData(null);
+              return;
+            }
+            setChiSquareData(hasilChiSquare);
+          } catch (e) {
+            setPesanKesalahan('Format tabel kontingensi salah. Gunakan JSON, misalnya: [[10,20],[30,40]].');
+            setChiSquareData(null);
+          }
+        } else if (tab === 'regression') {
+          if (x.length === 0 || y.length === 0) {
+            setPesanKesalahan('Masukkan data X dan Y.');
+            setRegresiData(null);
+            setDataGrafik(null);
+            return;
+          }
+          if (x.length !== y.length) {
+            setPesanKesalahan('Data X dan Y harus memiliki jumlah entri yang sama.');
+            setRegresiData(null);
+            setDataGrafik(null);
+            return;
+          }
+          const hasilRegresi = hitungRegresiDanKorelasi(x, y);
+          if (!hasilRegresi) {
+            setPesanKesalahan('Input X atau Y tidak valid. Pastikan semua entri adalah angka.');
+            setRegresiData(null);
+            setDataGrafik(null);
+            return;
+          }
+          const hasilGrafik = buatDataGrafik(x, null, hasilRegresi);
+          setRegresiData(hasilRegresi);
+          setDataGrafik(hasilGrafik);
+        }
+      };
+
+      useEffect(() => {
+        if (dataGrafik) {
+          const ctxHistogram = document.getElementById('histogram')?.getContext('2d');
+          if (ctxHistogram) {
+            new Chart(ctxHistogram, {
+              type: 'bar',
+              data: {
+                labels: Array.from({ length: dataGrafik.histogram.length }, (_, i) =>
+                  `${(dataGrafik.min + i * dataGrafik.ukuranBin).toFixed(2)} - ${(dataGrafik.min + (i + 1) * dataGrafik.ukuranBin).toFixed(2)}`
+                ),
+                datasets: [{
+                  label: 'Frekuensi',
+                  data: dataGrafik.histogram,
+                  backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                  borderColor: 'rgba(59, 130, 246, 1)',
+                  borderWidth: 1
+                }]
+              },
+              options: { scales: { y: { beginAtZero: true } } }
+            });
+          }
+
+          const ctxRingkasan = document.getElementById('ringkasan')?.getContext('2d');
+          if (ctxRingkasan) {
+            new Chart(ctxRingkasan, {
+              type: 'bar',
+              data: {
+                labels: ['Min', 'Q1', 'Median', 'Q3', 'Max'],
+                datasets: [{
+                  label: 'Ringkasan Statistik',
+                  data: dataGrafik.ringkasanStatistik,
+                  backgroundColor: 'rgba(236, 72, 153, 0.5)',
+                  borderColor: 'rgba(236, 72, 153, 1)',
+                  borderWidth: 1
+                }]
+              },
+              options: { scales: { y: { beginAtZero: true } } }
+            });
+          }
+
+          const ctxBoxPlot = document.getElementById('boxplot')?.getContext('2d');
+          if (ctxBoxPlot) {
+            new Chart(ctxBoxPlot, {
+              type: 'bar',
+              data: dataGrafik.boxPlotData,
+              options: { responsive: true }
+            });
+          }
+
+          const ctxPie = document.getElementById('pie')?.getContext('2d');
+          if (ctxPie) {
+            new Chart(ctxPie, {
+              type: 'pie',
+              data: dataGrafik.pieData,
+              options: { responsive: true }
+            });
+          }
+
+          const ctxLine = document.getElementById('line')?.getContext('2d');
+          if (ctxLine && dataGrafik.lineData) {
+            new Chart(ctxLine, {
+              type: 'line',
+              data: dataGrafik.lineData,
+              options: { responsive: true }
+            });
+          }
+
+          const ctxScatter = document.getElementById('scatter')?.getContext('2d');
+          if (ctxScatter && dataGrafik.scatterData) {
+            new Chart(ctxScatter, {
+              type: 'scatter',
+              data: dataGrafik.scatterData,
+              options: { responsive: true }
+            });
+          }
+        }
+      }, [dataGrafik]);
+
+      return (
+        <div className="container mx-auto p-6 max-w-5xl">
+          <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade">
+            <h1 className="text-3xl font-bold text-blue-600 mb-4 text-center">Kalkulator Statistik</h1>
+            <p className="text-gray-600 mb-6 text-center">Pilih analisis dan masukkan data untuk menghitung statistik dan melihat visualisasi.</p>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {['basic', 'pdfcdf', 'inferential', 'chisquare', 'regression'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`px-4 py-2 rounded-lg ${tab === t ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'} hover:bg-blue-500 hover:text-white transition`}
+                >
+                  {t === 'basic' ? 'Statistik Dasar' : t === 'pdfcdf' ? 'PDF & CDF' : t === 'inferential' ? 'Inferensial' : t === 'chisquare' ? 'Chi-Square' : 'Regresi & Korelasi'}
+                </button>
+              ))}
+            </div>
+
+            <div className="mb-6">
+              {tab !== 'chisquare' && tab !== 'regression' && (
+                <>
+                  <label className="block text-lg font-medium text-gray-700 mb-2">Masukkan Data (dipisah koma):</label>
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 1, 2, 3, 4, 5"
+                  />
+                </>
+              )}
+              {tab === 'inferential' && (
+                <>
+                  <label className="block text-lg font-medium text-gray-700 mt-4 mb-2">Data Kedua (opsional, untuk uji dua sampel):</label>
+                  <input
+                    type="text"
+                    value={input2}
+                    onChange={(e) => setInput2(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 2, 3, 4, 5, 6"
+                  />
+                  <label className="block text-lg font-medium text-gray-700 mt-4 mb-2">Nilai Hipotesis Nol (μ₀):</label>
+                  <input
+                    type="text"
+                    value={mu0}
+                    onChange={(e) => setMu0(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 0"
+                  />
+                  <label className="block text-lg font-medium text-gray-700 mt-4 mb-2">Level Kepercayaan (0-1):</label>
+                  <input
+                    type="text"
+                    value={confidenceLevel}
+                    onChange={(e) => setConfidenceLevel(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 0.95"
+                  />
+                  <label className="block text-lg font-medium text-gray-700 mt-4 mb-2">Level Signifikansi (α):</label>
+                  <input
+                    type="text"
+                    value={alpha}
+                    onChange={(e) => setAlpha(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 0.05"
+                  />
+                </>
+              )}
+              {tab === 'chisquare' && (
+                <>
+                  <label className="block text-lg font-medium text-gray-700 mb-2">Tabel Kontingensi (format JSON):</label>
+                  <textarea
+                    value={contingencyTable}
+                    onChange={(e) => setContingencyTable(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder='Contoh: [[10,20],[30,40]]'
+                    rows="4"
+                  />
+                </>
+              )}
+              {tab === 'regression' && (
+                <>
+                  <label className="block text-lg font-medium text-gray-700 mb-2">Data X (dipisah koma):</label>
+                  <input
+                    type="text"
+                    value={xData}
+                    onChange={(e) => setXData(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 1, 2, 3, 4, 5"
+                  />
+                  <label className="block text-lg font-medium text-gray-700 mt-4 mb-2">Data Y (dipisah koma):</label>
+                  <input
+                    type="text"
+                    value={yData}
+                    onChange={(e) => setYData(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    placeholder="Contoh: 2, 4, 5, 4, 5"
+                  />
+                </>
+              )}
+              <button
+                onClick={tanganiHitung}
+                className="mt-4 w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 hover:animate-pulse transition duration-300 shadow-md"
+              >
+                Hitung
+              </button>
+            </div>
+            {pesanKesalahan && (
+              <div className="mb-6 p-4 bg-red-100 text-red-700 rounded-lg animate-fade">
+                <p>{pesanKesalahan}</p>
+              </div>
+            )}
+          </div>
+
+          {statistik && tab === 'basic' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil Statistik Dasar</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-gray-700 animate-slideLeft"><strong>Rata-rata:</strong> {statistik.mean.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideLeft animate-delay-100"><strong>Median:</strong> {statistik.median.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideLeft animate-delay-200"><strong>Modus:</strong> {statistik.modus}</p>
+                  <p className="text-gray-700 animate-slideLeft animate-delay-300"><strong>Rentang:</strong> {statistik.rentang.toFixed(2)}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-gray-700 animate-slideRight"><strong>Varians:</strong> {statistik.varians.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideRight animate-delay-100"><strong>Standar Deviasi:</strong> {statistik.stdDev.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideRight animate-delay-200"><strong>Kuartil 1 (Q1):</strong> {statistik.q1.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideRight animate-delay-300"><strong>Kuartil 3 (Q3):</strong> {statistik.q3.toFixed(2)}</p>
+                  <p className="text-gray-700 animate-slideRight animate-delay-400"><strong>IQR:</strong> {statistik.iqr.toFixed(2)}</p>
+                </div>
+              </div>
+              <h3 className="text-xl font-semibold text-blue-600 mt-6 mb-2 animate-slideLeft">Langkah-langkah Perhitungan</h3>
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-gray-700 animate-slideLeft animate-delay-100"><strong>Rata-rata:</strong> Jumlah angka ({statistik.diurutkan.join(' + ')}) / {statistik.diurutkan.length} = {statistik.mean.toFixed(2)}</p>
+                <p className="text-gray-700 animate-slideLeft animate-delay-200"><strong>Median:</strong> Nilai tengah dari data terurut ({statistik.diurutkan.join(', ')}) = {statistik.median.toFixed(2)}</p>
+                <p className="text-gray-700 animate-slideLeft animate-delay-300"><strong>Varians:</strong> Rata-rata kuadrat selisih dari mean = {statistik.varians.toFixed(2)}</p>
+              </div>
+            </div>
+          )}
+
+          {pdfCdfData && tab === 'pdfcdf' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil PDF & CDF</h2>
+              <p className="text-gray-700"><strong>Rata-rata:</strong> {pdfCdfData.mean.toFixed(2)}</p>
+              <p className="text-gray-700"><strong>Standar Deviasi:</strong> {pdfCdfData.stdDev.toFixed(2)}</p>
+              <div className="mt-4">
+                <h3 className="text-lg font-medium text-gray-700 mb-2">Grafik PDF & CDF</h3>
+                <canvas id="line" className="w-full"></canvas>
+              </div>
+            </div>
+          )}
+
+          {ciData && tab === 'inferential' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil Selang Kepercayaan</h2>
+              <p className="text-gray-700"><strong>Rata-rata:</strong> {ciData.mean.toFixed(2)}</p>
+              <p className="text-gray-700"><strong>Level Kepercayaan:</strong> {(ciData.confidenceLevel * 100).toFixed(0)}%</p>
+              <p className="text-gray-700"><strong>Z-test CI:</strong> [{ciData.ciZ[0].toFixed(2)}, {ciData.ciZ[1].toFixed(2)}]</p>
+              <p className="text-gray-700"><strong>T-test CI:</strong> [{ciData.ciT[0].toFixed(2)}, {ciData.ciT[1].toFixed(2)}]</p>
+            </div>
+          )}
+
+          {hypothesisData && tab === 'inferential' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil Pengujian Hipotesis</h2>
+              <h3 className="text-lg font-medium text-gray-700 mb-2">Uji Satu Sampel</h3>
+              <p className="text-gray-700"><strong>Rata-rata:</strong> {hypothesisData.mean1.toFixed(2)}</p>
+              <p className="text-gray-700"><strong>Z-statistik:</strong> {hypothesisData.zStat.toFixed(2)}</p>
+              <p className="text-gray-700"><strong>P-value:</strong> {hypothesisData.pValueOneSample.toFixed(4)}</p>
+              <p className="text-gray-700"><strong>Kesimpulan:</strong> {hypothesisData.pValueOneSample < hypothesisData.alpha ? 'Tolak H₀' : 'Gagal tolak H₀'}</p>
+              {hypothesisData.twoSampleResult && (
+                <>
+                  <h3 className="text-lg font-medium text-gray-700 mt-4 mb-2">Uji Dua Sampel</h3>
+                  <p className="text-gray-700"><strong>Rata-rata Data 2:</strong> {hypothesisData.twoSampleResult.mean2.toFixed(2)}</p>
+                  <p className="text-gray-700"><strong>Z-statistik:</strong> {hypothesisData.twoSampleResult.zStatTwo.toFixed(2)}</p>
+                  <p className="text-gray-700"><strong>P-value:</strong> {hypothesisData.twoSampleResult.pValueTwoSample.toFixed(4)}</p>
+                  <p className="text-gray-700"><strong>Kesimpulan:</strong> {hypothesisData.twoSampleResult.pValueTwoSample < hypothesisData.alpha ? 'Tolak H₀' : 'Gagal tolak H₀'}</p>
+                </>
+              )}
+            </div>
+          )}
+
+          {chiSquareData && tab === 'chisquare' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil Uji Chi-Square</h2>
+              <p className="text-gray-700"><strong>Statistik Chi-Square:</strong> {chiSquareData.chiSquareStat.toFixed(2)}</p>
+              <p className="text-gray-700"><strong>Derajat Kebebasan (df):</strong> {chiSquareData.df}</p>
+              <p className="text-gray-700"><strong>P-value:</strong> {chiSquareData.pValue.toFixed(4)}</p>
+              <p className="text-gray-700"><strong>Kesimpulan:</strong> {chiSquareData.pValue < 0.05 ? 'Tolak H₀ (variabel tidak independen)' : 'Gagal tolak H₀ (variabel independen)'}</p>
+            </div>
+          )}
+
+          {regresiData && tab === 'regression' && (
+            <div className="bg-white shadow-lg rounded-lg p-6 mb-6 animate-fade animate-delay-100">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Hasil Regresi & Korelasi</h2>
+              <p className="text-gray-700"><strong>Persamaan Regresi:</strong> y = {regresiData.intercept.toFixed(2)} + {regresiData.slope.toFixed(2)}x</p>
+              <p className="text-gray-700"><strong>Koefisien Korelasi (Pearson’s r):</strong> {regresiData.pearsonR.toFixed(4)}</p>
+              <div className="mt-4">
+                <h3 className="text-lg font-medium text-gray-700 mb-2">Scatter Plot dengan Garis Regresi</h3>
+                <canvas id="scatter" className="w-full"></canvas>
+              </div>
+            </div>
+          )}
+
+          {dataGrafik && (tab === 'basic' || tab === 'pdfcdf') && (
+            <div className="bg-white shadow-lg rounded-lg p-6 animate-fade animate-delay-200">
+              <h2 className="text-2xl font-semibold text-blue-600 mb-4">Visualisasi Data</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="animate-slideLeft">
+                  <h3 className="text-lg font-medium text-gray-700 mb-2">Histogram</h3>
+                  <canvas id="histogram" className="w-full"></canvas>
+                </div>
+                <div className="animate-slideRight">
+                  <h3 className="text-lg font-medium text-gray-700 mb-2">Ringkasan Statistik</h3>
+                  <canvas id="ringkasan" className="w-full"></canvas>
+                </div>
+                <div className="animate-slideLeft">
+                  <h3 className="text-lg font-medium text-gray-700 mb-2">Pie Chart</h3>
+                  <canvas id="pie" className="w-full"></canvas>
+                </div>
+                <div className="animate-slideRight">
+                  <h3 className="text-lg font-medium text-gray-700 mb-2">Box Plot (Simulasi)</h3>
+                  <canvas id="boxplot" className="w-full"></canvas>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<Aplikasi />);
+  </script>
+</body>
+</html>
